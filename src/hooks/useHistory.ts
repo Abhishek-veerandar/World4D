@@ -19,7 +19,7 @@ export type HistoryState = {
 
 type Loaded = { file: string; features: PolityFeature[] };
 
-/** Loads the century (or decades) of history around `year`. Pass enabled=false to pause loading. */
+/** Loads the century of history around `year`. Pass enabled=false to pause loading. */
 export function useHistory(year: number, enabled: boolean): HistoryState {
   const [index, setIndex] = useState<HistoryIndex | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -39,9 +39,9 @@ export function useHistory(year: number, enabled: boolean): HistoryState {
   const chunk = index ? chunkForYear(index, year) : undefined;
 
   useEffect(() => {
-    if (!enabled || !chunk) return;
+    if (!enabled || !index || !chunk) return;
     let cancelled = false;
-    loadChunk(chunk)
+    loadChunk(index, chunk)
       .then((features) => {
         if (cancelled) return;
         setLoaded({ file: chunk.file, features });
@@ -51,17 +51,18 @@ export function useHistory(year: number, enabled: boolean): HistoryState {
     return () => {
       cancelled = true;
     };
-  }, [enabled, chunk]);
+  }, [enabled, index, chunk]);
 
-  // Fetch the next chunk ahead of time once we're in the last quarter of this one,
-  // so playback doesn't stall at chunk boundaries.
+  // Once this century is in, fetch the ones on either side in the background, so
+  // playback and scrubbing never wait at a century boundary.
+  const currentReady = loaded?.file === chunk?.file;
   useEffect(() => {
-    if (!enabled || !index || !chunk) return;
-    const progress = (year - chunk.from) / (chunk.to - chunk.from + 1);
-    if (progress < 0.75) return;
-    const next = index.chunks[index.chunks.indexOf(chunk) + 1];
-    if (next) loadChunk(next).catch(() => {});
-  }, [enabled, index, chunk, year]);
+    if (!enabled || !index || !chunk || !currentReady) return;
+    const i = index.chunks.indexOf(chunk);
+    for (const neighbour of [index.chunks[i + 1], index.chunks[i - 1]]) {
+      if (neighbour) loadChunk(index, neighbour).catch(() => {});
+    }
+  }, [enabled, index, chunk, currentReady]);
 
   // While a new chunk downloads, keep drawing the previous one so the map doesn't blank out.
   const polities = useMemo(

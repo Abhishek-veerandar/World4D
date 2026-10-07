@@ -100,6 +100,14 @@ export default function WorldMap(props: Props) {
     return geoPath(projection);
   }, [width, height]);
 
+  // Historical borders are already dense, so d3's adaptive resampling (for curved
+  // great-circle edges) adds work without visible benefit. Turning it off and
+  // rounding to 2 decimals makes these paths ~2-3x cheaper to build and draw.
+  const historyPath = useMemo(() => {
+    const projection = geoNaturalEarth1().fitSize([width, height], SPHERE).precision(0);
+    return geoPath(projection).digits(2);
+  }, [width, height]);
+
   const spherePath = useMemo(() => path(SPHERE) ?? '', [path]);
   const graticulePath = useMemo(() => path(geoGraticule10()) ?? '', [path]);
 
@@ -109,18 +117,18 @@ export default function WorldMap(props: Props) {
 
   // Most polities keep the same record for many years, so cache each record's path
   // string: scrubbing the timeline then only computes paths for records that changed.
-  const polityPathCache = useMemo(() => new WeakMap<PolityFeature, string>(), [path]);
+  const polityPathCache = useMemo(() => new WeakMap<PolityFeature, string>(), [historyPath]);
   const polityShapes = useMemo<ShapeData[]>(() => {
     if (!isHistory) return NO_SHAPES;
     return polities.map((p) => {
       let d = polityPathCache.get(p);
       if (d === undefined) {
-        d = path(p) ?? '';
+        d = historyPath(p) ?? '';
         polityPathCache.set(p, d);
       }
       return { id: p.id, name: p.properties.name, d, fill: colorFor(p.properties.name) };
     });
-  }, [isHistory, polities, path, polityPathCache]);
+  }, [isHistory, polities, historyPath, polityPathCache]);
 
   // ---------- today shapes ----------
 

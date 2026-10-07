@@ -1,21 +1,29 @@
 #!/usr/bin/env node
 /**
- * Turns the Cliopatria dataset into small, time-chunked files the app can load
- * on demand.
+ * Turns the Cliopatria dataset into small, time-chunked TopoJSON files the app
+ * can load on demand.
  *
  *   1. Download cliopatria.geojson.zip from
  *      https://github.com/Seshat-Global-History-Databank/cliopatria and unzip it.
- *   2. node scripts/build-history.mjs path/to/cliopatria.geojson
+ *   2. npm run build:history -- path/to/cliopatria.geojson
  *
- * Output goes to public/history/: one file per century plus index.json.
- * No npm packages needed; plain Node 18+.
+ * Output goes to public/history/: one TopoJSON file per century plus index.json.
+ * TopoJSON stores each border line once, even when it is shared by neighbouring
+ * polities or by the same polity across many years, which makes the files
+ * roughly 3-4x smaller than plain GeoJSON.
  *
  * Cliopatria (Seshat Global History Databank) is licensed CC BY 4.0.
- * Changes made here: alliance/allegiance ("RELATION") rows removed, shapes
- * simplified, coordinates rounded and rings re-oriented for d3-geo.
+ * Changes made here: alliance/allegiance ("RELATION") rows and umbrella
+ * entities removed, shapes simplified, coordinates rounded and quantized,
+ * rings re-oriented for d3-geo.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import * as topojsonServer from 'topojson-server';
+
+// topojson-server ships as CommonJS; this works whichever way Node exposes it.
+const topology = topojsonServer.topology ?? topojsonServer.default.topology;
 
 const input = process.argv[2];
 if (!input) {
@@ -27,6 +35,8 @@ const OUT_DIR = resolve('public/history');
 const TOLERANCE = Number(process.env.TOLERANCE ?? 0.03); // degrees (~3 km); higher = smaller files, coarser borders
 const DECIMALS = 2; // ~1 km precision after rounding
 const MIN_RING_POINTS = 4;
+const CHUNK_YEARS = 100; // one file per century
+const QUANTIZATION = 1e5; // TopoJSON grid size per chunk; 1e5 keeps sub-kilometre precision
 
 console.log(`Reading ${input} …`);
 const data = JSON.parse(readFileSync(input, 'utf8'));
@@ -39,13 +49,6 @@ const features = data.features.filter(
   (f) => f.properties?.Type === 'POLITY' && f.geometry && !isComposite(f.properties),
 );
 console.log(`${features.length} polity records drawn (of ${data.features.length})`);
-
-/** Chunk length by era: busier periods get shorter chunks so each file stays small. */
-function chunkYearsAt(year) {
-  if (year < 1000) return 100;
-  if (year < 1700) return 50;
-  return 25;
-}
 
 // ---------- geometry helpers ----------
 
@@ -113,7 +116,7 @@ function cleanRing(ring, isOuter) {
   if (out.length && (out[0][0] !== out.at(-1)[0] || out[0][1] !== out.at(-1)[1])) out.push(out[0]);
   if (out.length < MIN_RING_POINTS) return null;
   // d3-geo wants outer rings clockwise and holes counter-clockwise.
-  const ccw = signedArea(out) < 0;
+  const ccw = signedArea(out) > 0;
   if (isOuter === ccw) out.reverse();
   return out;
 }
@@ -170,21 +173,32 @@ console.log(`${records.length} records kept, ${dropped} too small to draw`);
 
 const minYear = Math.min(...records.map((r) => r.from));
 const maxYear = Math.max(...records.map((r) => r.to));
-const firstChunk = Math.floor(minYear / 100) * 100;
+const firstChunk = Math.floor(minYear / CHUNK_YEARS) * CHUNK_YEARS;
 
 rmSync(OUT_DIR, { recursive: true, force: true });
 mkdirSync(OUT_DIR, { recursive: true });
 
 const chunks = [];
+const hash = createHash('sha256');
 let totalBytes = 0;
-for (let start = firstChunk; start <= maxYear; start += chunkYearsAt(start)) {
-  const end = start + chunkYearsAt(start) - 1;
+let biggest = { file: '', bytes: 0 };
+
+for (let start = firstChunk; start <= maxYear; start += CHUNK_YEARS) {
+  const end = start + CHUNK_YEARS - 1;
   const inChunk = records.filter((r) => r.from <= end && r.to >= start);
   if (!inChunk.length) continue;
-  const file = `${start < 0 ? `m${-start}` : start}.json`;
-  const json = JSON.stringify(inChunk);
+
+  const collection = {
+    type: 'FeatureCollection',
+    features: inChunk.map(({ geometry, ...properties }) => ({ type: 'Feature', properties, geometry })),
+  };
+  const json = JSON.stringify(topology({ polities: collection }, QUANTIZATION));
+
+  const file = `${start < 0 ? `m${-start}` : start}.topo.json`;
   writeFileSync(join(OUT_DIR, file), json);
+  hash.update(json);
   totalBytes += json.length;
+  if (json.length > biggest.bytes) biggest = { file, bytes: json.length };
   chunks.push({ from: start, to: end, file, count: inChunk.length });
 }
 
@@ -202,6 +216,8 @@ for (const r of records) {
 const index = {
   source: 'Cliopatria (Seshat Global History Databank), CC BY 4.0',
   sourceUrl: 'https://github.com/Seshat-Global-History-Databank/cliopatria',
+  // Changes whenever the data changes; the app uses it to refresh its offline cache.
+  version: hash.digest('hex').slice(0, 12),
   minYear,
   maxYear,
   chunks,
@@ -211,6 +227,4 @@ writeFileSync(join(OUT_DIR, 'index.json'), JSON.stringify(index));
 
 const mb = (n) => (n / 1024 / 1024).toFixed(1);
 console.log(`Wrote ${chunks.length} chunks (${mb(totalBytes)} MB total) to ${OUT_DIR}`);
-const sizes = chunks.map((c) => ({ ...c, bytes: JSON.stringify(records.filter((r) => r.from <= c.to && r.to >= c.from)).length }));
-const biggest = sizes.sort((a, b) => b.bytes - a.bytes)[0];
-console.log(`Largest chunk: ${biggest.file} (${biggest.count} records, ${mb(biggest.bytes)} MB)`);
+console.log(`Largest chunk: ${biggest.file} (${mb(biggest.bytes)} MB). Data version: ${index.version}`);
