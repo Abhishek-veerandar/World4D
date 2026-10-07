@@ -4,11 +4,22 @@ import DetailsPanel from './components/DetailsPanel';
 import HistoryPanel from './components/HistoryPanel';
 import Timeline, { type Speed } from './components/Timeline';
 import type { Crumb } from './components/Breadcrumb';
+import EventFilters from './components/EventFilters';
+import SearchBox from './components/SearchBox';
 import { borders, countries, land, type CountryFeature } from './lib/countries';
 import { regionsWithin, type RegionFeature } from './lib/regions';
+import type { Point } from 'geojson';
 import type { PolityFeature } from './lib/history';
+import {
+  afterglowYears,
+  ALL_EVENT_TYPES,
+  eventsOnMap,
+  type EventType,
+  type HistoricalEvent,
+} from './lib/events';
 import { useRegions } from './hooks/useRegions';
 import { useHistory } from './hooks/useHistory';
+import { useEvents } from './hooks/useEvents';
 
 /** The timeline's range. The data itself reaches back to 3400 BCE. */
 const START_YEAR = -2000;
@@ -26,6 +37,19 @@ const WORLD: TodaySelection = { countryId: null, regionId: null, subregionId: nu
 
 /** A polity followed through time. `focus` is its shape when picked, for the camera. */
 type PolitySelection = { name: string; focus: PolityFeature } | null;
+
+const FILTERS_KEY = 'world4d.eventTypes';
+
+/** The event types the viewer last had switched on; everything on by default. */
+function loadSavedTypes(): Set<EventType> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) ?? 'null');
+    if (Array.isArray(saved)) return new Set(saved.filter((t) => ALL_EVENT_TYPES.includes(t)));
+  } catch {
+    // Storage unavailable or corrupt: fall back to the default.
+  }
+  return new Set(ALL_EVENT_TYPES);
+}
 
 export default function App() {
   const [mode, setMode] = useState<MapMode>('history');
@@ -69,6 +93,85 @@ export default function App() {
   }, []);
 
   const clearPolity = useCallback(() => setPolity(null), []);
+
+  // ---------- events ----------
+
+  const [eventTypes, setEventTypes] = useState<Set<EventType>>(loadSavedTypes);
+  const [selectedEvent, setSelectedEvent] = useState<HistoricalEvent | null>(null);
+  const eventsState = useEvents(mode === 'history');
+
+  const changeEventTypes = useCallback((types: Set<EventType>) => {
+    setEventTypes(types);
+    try {
+      localStorage.setItem(FILTERS_KEY, JSON.stringify([...types]));
+    } catch {
+      // Not saved; the choice still applies for this visit.
+    }
+  }, []);
+
+  // Events of the enabled types, for the density strip under the map.
+  const typedEvents = useMemo(
+    () => eventsState.events.filter((e) => eventTypes.has(e.type)),
+    [eventsState.events, eventTypes],
+  );
+
+  // Pins for the current year, plus the selected event even if it is not "current".
+  const pins = useMemo(() => {
+    const list = eventsOnMap(typedEvents, year, eventTypes);
+    if (selectedEvent && !list.some((e) => e.id === selectedEvent.id)) list.push(selectedEvent);
+    return list;
+  }, [typedEvents, year, eventTypes, selectedEvent]);
+
+  const pinCounts = useMemo(() => {
+    const counts: Partial<Record<EventType, number>> = {};
+    for (const e of pins) counts[e.type] = (counts[e.type] ?? 0) + 1;
+    return counts;
+  }, [pins]);
+
+  const selectEvent = useCallback(
+    (e: HistoricalEvent) => {
+      setPolity(null);
+      setSelectedEvent(e);
+      // Bring the timeline to the event unless it is already showing.
+      const showing = e.year <= year && year <= (e.end ?? e.year) + afterglowYears(year);
+      if (!showing) changeYear(e.year);
+    },
+    [year, changeYear],
+  );
+
+  const clearEvent = useCallback(() => setSelectedEvent(null), []);
+
+  // Picking a polity and an event are exclusive: the panel shows one at a time.
+  const selectPolityOnly = useCallback(
+    (p: PolityFeature) => {
+      setSelectedEvent(null);
+      selectPolity(p);
+    },
+    [selectPolity],
+  );
+
+  /** Esc / ocean click in history mode: close the event first, then the polity. */
+  const historyBack = useCallback(() => {
+    if (selectedEvent) setSelectedEvent(null);
+    else setPolity(null);
+  }, [selectedEvent]);
+
+  const historyReset = useCallback(() => {
+    setSelectedEvent(null);
+    setPolity(null);
+  }, []);
+
+  // A polity picked in search is selected once its century has loaded.
+  const [pendingPolity, setPendingPolity] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingPolity || history.loading) return;
+    const match = history.polities.find((p) => p.properties.name === pendingPolity);
+    if (match) {
+      setSelectedEvent(null);
+      setPolity({ name: match.properties.name, focus: match });
+    }
+    setPendingPolity(null);
+  }, [pendingPolity, history.polities, history.loading]);
 
   // ---------- today mode ----------
 
@@ -158,7 +261,41 @@ export default function App() {
       ? 'Loading history…'
       : null;
 
-  const focus = isToday ? (subregion ?? region ?? country) : (polity?.focus ?? null);
+  const eventFocus = useMemo<Point | null>(
+    () => (selectedEvent ? { type: 'Point', coordinates: [selectedEvent.lon, selectedEvent.lat] } : null),
+    [selectedEvent],
+  );
+
+  const focus = isToday
+    ? (subregion ?? region ?? country)
+    : (eventFocus ?? polity?.focus ?? null);
+
+  // ---------- search ----------
+
+  const pickPolity = useCallback((name: string, from: number) => {
+    setMode('history');
+    setPlaying(false);
+    setSelectedEvent(null);
+    setPolity(null);
+    setYear(from);
+    setPendingPolity(name);
+  }, []);
+
+  const pickEvent = useCallback((e: HistoricalEvent) => {
+    setMode('history');
+    setPlaying(false);
+    setPolity(null);
+    setSelectedEvent(e);
+    setYear(e.year);
+    // Make sure the picked event's type is visible.
+    setEventTypes((types) => (types.has(e.type) ? types : new Set([...types, e.type])));
+  }, []);
+
+  const pickCountry = useCallback((c: CountryFeature) => {
+    setMode('today');
+    setPlaying(false);
+    setSelection({ countryId: c.id, regionId: null, subregionId: null });
+  }, []);
 
   return (
     <div className="app">
@@ -166,6 +303,12 @@ export default function App() {
         <h1>
           World<span>4D</span>
         </h1>
+        <SearchBox
+          countries={countries}
+          onPickPolity={pickPolity}
+          onPickEvent={pickEvent}
+          onPickCountry={pickCountry}
+        />
         <nav className="mode-switch" aria-label="Map mode">
           <button
             type="button"
@@ -193,12 +336,16 @@ export default function App() {
             focus={focus}
             loadingLabel={loadingLabel}
             crumbs={crumbs}
-            onReset={isToday ? () => setSelection(WORLD) : clearPolity}
-            onBack={isToday ? goUpToday : clearPolity}
+            onReset={isToday ? () => setSelection(WORLD) : historyReset}
+            onBack={isToday ? goUpToday : historyBack}
             land={land}
             polities={history.polities}
             selectedPolityName={polity?.name ?? null}
-            onSelectPolity={selectPolity}
+            onSelectPolity={selectPolityOnly}
+            events={pins}
+            year={year}
+            selectedEventId={selectedEvent?.id ?? null}
+            onSelectEvent={selectEvent}
             countries={countries}
             borders={borders}
             regions={regionsState.regions}
@@ -209,7 +356,17 @@ export default function App() {
             onSelectCountry={selectCountry}
             onSelectRegion={selectRegion}
             onSelectSubregion={selectSubregion}
-          />
+          >
+            {!isToday && (
+              <EventFilters
+                types={eventTypes}
+                onChange={changeEventTypes}
+                countsNow={pinCounts}
+                loading={eventsState.loading}
+                error={eventsState.error}
+              />
+            )}
+          </WorldMap>
           {!isToday && (
             <Timeline
               year={year}
@@ -218,6 +375,7 @@ export default function App() {
               playing={playing}
               speed={speed}
               polityCount={history.polities.length}
+              events={typedEvents}
               loading={history.loading}
               onYearChange={changeYear}
               onTogglePlay={togglePlay}
@@ -245,9 +403,13 @@ export default function App() {
             polities={history.polities}
             selectedName={polity?.name ?? null}
             error={history.error}
-            onSelect={selectPolity}
+            onSelect={selectPolityOnly}
             onClear={clearPolity}
             onJumpTo={changeYear}
+            eventsNow={pins.filter((e) => e.id !== selectedEvent?.id)}
+            selectedEvent={selectedEvent}
+            onSelectEvent={selectEvent}
+            onClearEvent={clearEvent}
           />
         )}
       </main>

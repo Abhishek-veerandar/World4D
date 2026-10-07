@@ -1,4 +1,6 @@
 import { formatYear } from '../lib/history';
+import type { HistoricalEvent } from '../lib/events';
+import EventStrip from './EventStrip';
 
 export const SPEEDS = [10, 20, 50, 100] as const;
 export type Speed = (typeof SPEEDS)[number];
@@ -10,6 +12,8 @@ type Props = {
   playing: boolean;
   speed: Speed;
   polityCount: number;
+  /** Events of the enabled types, drawn as a density strip above the slider. */
+  events: HistoricalEvent[];
   loading: boolean;
   onYearChange: (year: number) => void;
   onTogglePlay: () => void;
@@ -25,6 +29,7 @@ export default function Timeline({
   playing,
   speed,
   polityCount,
+  events,
   loading,
   onYearChange,
   onTogglePlay,
@@ -93,6 +98,16 @@ export default function Timeline({
           </label>
         </div>
       </div>
+
+      {events.length > 0 && (
+        <EventStrip
+          events={events}
+          min={min}
+          max={max}
+          year={year}
+          onYearChange={onYearChange}
+        />
+      )}
 
       <input
         className="timeline-slider"

@@ -5,17 +5,31 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type MouseEvent,
+  type ReactNode,
 } from 'react';
-import { geoGraticule10, geoNaturalEarth1, geoPath, type GeoPermissibleObjects } from 'd3-geo';
+import {
+  geoGraticule10,
+  geoNaturalEarth1,
+  geoPath,
+  type GeoPermissibleObjects,
+  type GeoProjection,
+} from 'd3-geo';
 import { select } from 'd3-selection';
 import 'd3-transition';
 import { zoom as d3Zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
 import type { FeatureCollection, MultiLineString } from 'geojson';
 import type { CountryFeature } from '../lib/countries';
 import type { RegionFeature } from '../lib/regions';
-import { colorFor, type PolityFeature } from '../lib/history';
+import { colorFor, formatYear, type PolityFeature } from '../lib/history';
+import {
+  EVENT_TYPE_INFO,
+  eventFreshness,
+  eventPinRadius,
+  type HistoricalEvent,
+} from '../lib/events';
 import { useElementSize } from '../hooks/useElementSize';
 import Breadcrumb, { type Crumb } from './Breadcrumb';
 
@@ -37,6 +51,11 @@ type Props = {
   polities: PolityFeature[];
   selectedPolityName: string | null;
   onSelectPolity: (polity: PolityFeature) => void;
+  /** Events to pin on the map, and the year used to fade older ones. */
+  events: HistoricalEvent[];
+  year: number;
+  selectedEventId: string | null;
+  onSelectEvent: (event: HistoricalEvent) => void;
 
   // ---- today mode ----
   countries: CountryFeature[];
@@ -51,6 +70,9 @@ type Props = {
   onSelectCountry: (country: CountryFeature) => void;
   onSelectRegion: (region: RegionFeature) => void;
   onSelectSubregion: (region: RegionFeature) => void;
+
+  /** Extra overlays drawn over the map (e.g. event filters). */
+  children?: ReactNode;
 };
 
 type Tooltip = { name: string; x: number; y: number } | null;
@@ -59,8 +81,33 @@ type ShapeData = { id: string; name: string; d: string; fill?: string };
 // Deep zoom is needed for districts: a small district is a few pixels wide at world scale.
 const MAX_ZOOM = 1000;
 const MAX_FOCUS_ZOOM = 600;
+/** Zoom used when flying to a single point (an event). */
+const POINT_FOCUS_ZOOM = 6;
 const SPHERE = { type: 'Sphere' } as const;
 const NO_SHAPES: ShapeData[] = [];
+
+/**
+ * The current pan/zoom, shared with layers that must not scale with the map
+ * (event pins). Only those layers re-render while panning.
+ */
+function createTransformStore() {
+  let current: ZoomTransform = zoomIdentity;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    set(next: ZoomTransform) {
+      current = next;
+      listeners.forEach((l) => l());
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+type TransformStore = ReturnType<typeof createTransformStore>;
 
 export default function WorldMap(props: Props) {
   const {
@@ -74,6 +121,10 @@ export default function WorldMap(props: Props) {
     polities,
     selectedPolityName,
     onSelectPolity,
+    events,
+    year,
+    selectedEventId,
+    onSelectEvent,
     countries,
     borders,
     regions,
@@ -84,6 +135,7 @@ export default function WorldMap(props: Props) {
     onSelectCountry,
     onSelectRegion,
     onSelectSubregion,
+    children,
   } = props;
 
   const { ref: containerRef, width, height } = useElementSize<HTMLDivElement>();
@@ -91,6 +143,7 @@ export default function WorldMap(props: Props) {
   const gRef = useRef<SVGGElement>(null);
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip>(null);
+  const transformStore = useMemo(() => createTransformStore(), []);
 
   const isHistory = mode === 'history';
 
@@ -103,10 +156,11 @@ export default function WorldMap(props: Props) {
   // Historical borders are already dense, so d3's adaptive resampling (for curved
   // great-circle edges) adds work without visible benefit. Turning it off and
   // rounding to 2 decimals makes these paths ~2-3x cheaper to build and draw.
-  const historyPath = useMemo(() => {
-    const projection = geoNaturalEarth1().fitSize([width, height], SPHERE).precision(0);
-    return geoPath(projection).digits(2);
-  }, [width, height]);
+  const historyProjection = useMemo(
+    () => geoNaturalEarth1().fitSize([width, height], SPHERE).precision(0),
+    [width, height],
+  );
+  const historyPath = useMemo(() => geoPath(historyProjection).digits(2), [historyProjection]);
 
   const spherePath = useMemo(() => path(SPHERE) ?? '', [path]);
   const graticulePath = useMemo(() => path(geoGraticule10()) ?? '', [path]);
@@ -210,6 +264,7 @@ export default function WorldMap(props: Props) {
       ])
       .on('zoom', (event) => {
         gRef.current?.setAttribute('transform', event.transform.toString());
+        transformStore.set(event.transform);
       });
 
     select(svg).call(zoom).on('dblclick.zoom', null);
@@ -218,7 +273,7 @@ export default function WorldMap(props: Props) {
     return () => {
       select(svg).on('.zoom', null);
     };
-  }, [width, height]);
+  }, [width, height, transformStore]);
 
   const animateTo = useCallback((transform: ZoomTransform) => {
     const svg = svgRef.current;
@@ -241,6 +296,20 @@ export default function WorldMap(props: Props) {
       animateTo(zoomIdentity);
       return;
     }
+    // A single point (an event) has no size to fit, so use a fixed zoom.
+    const point = focus as { type?: string; coordinates?: unknown };
+    if (point.type === 'Point' && Array.isArray(point.coordinates)) {
+      const p = historyProjection(point.coordinates as [number, number]);
+      if (p) {
+        animateTo(
+          zoomIdentity
+            .translate(width / 2, height / 2)
+            .scale(POINT_FOCUS_ZOOM)
+            .translate(-p[0], -p[1]),
+        );
+      }
+      return;
+    }
     const [[x0, y0], [x1, y1]] = path.bounds(focus);
     const scale = Math.max(
       1,
@@ -252,7 +321,7 @@ export default function WorldMap(props: Props) {
         .scale(scale)
         .translate(-(x0 + x1) / 2, -(y0 + y1) / 2),
     );
-  }, [focus, path, width, height, animateTo]);
+  }, [focus, path, historyProjection, width, height, animateTo]);
 
   // Escape goes up one level. Ignored while typing in a text field.
   useEffect(() => {
@@ -381,6 +450,21 @@ export default function WorldMap(props: Props) {
               </>
             )}
           </g>
+
+          {isHistory && events.length > 0 && (
+            <EventPins
+              events={events}
+              year={year}
+              projection={historyProjection}
+              store={transformStore}
+              width={width}
+              height={height}
+              selectedId={selectedEventId}
+              onSelect={onSelectEvent}
+              onHover={handleHover}
+              onLeave={handleLeave}
+            />
+          )}
         </svg>
       )}
 
@@ -410,9 +494,83 @@ export default function WorldMap(props: Props) {
           ⟲
         </button>
       </div>
+
+      {children}
     </div>
   );
 }
+
+type PinsProps = {
+  events: HistoricalEvent[];
+  year: number;
+  projection: GeoProjection;
+  store: TransformStore;
+  width: number;
+  height: number;
+  selectedId: string | null;
+  onSelect: (event: HistoricalEvent) => void;
+  onHover: (name: string, e: MouseEvent) => void;
+  onLeave: () => void;
+};
+
+/**
+ * Event pins sit outside the zoomed group so they keep the same size at every
+ * zoom level; their positions follow the map through the shared transform.
+ */
+const EventPins = memo(function EventPins({
+  events,
+  year,
+  projection,
+  store,
+  width,
+  height,
+  selectedId,
+  onSelect,
+  onHover,
+  onLeave,
+}: PinsProps) {
+  const transform = useSyncExternalStore(store.subscribe, store.get);
+  const projected = useMemo(
+    () =>
+      events
+        .map((event) => ({ event, point: projection([event.lon, event.lat]) }))
+        // Draw the selected pin last so it sits on top.
+        .sort((a, b) => Number(a.event.id === selectedId) - Number(b.event.id === selectedId)),
+    [events, projection, selectedId],
+  );
+
+  return (
+    <g className="event-pins">
+      {projected.map(({ event, point }) => {
+        if (!point) return null;
+        const [x, y] = transform.apply(point);
+        if (x < -20 || y < -20 || x > width + 20 || y > height + 20) return null;
+        const selected = event.id === selectedId;
+        const r = eventPinRadius(event) + (selected ? 2 : 0);
+        const label = `${event.name} · ${formatYear(event.year)}`;
+        return (
+          <g
+            key={event.id}
+            className={selected ? 'event-pin selected' : 'event-pin'}
+            transform={`translate(${x.toFixed(1)},${y.toFixed(1)})`}
+            style={{ opacity: selected ? 1 : eventFreshness(event, year) }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(event);
+            }}
+            onMouseMove={(e) => onHover(label, e)}
+            onMouseLeave={onLeave}
+            role="button"
+            aria-label={`${EVENT_TYPE_INFO[event.type].singular}: ${label}`}
+          >
+            {selected && <circle className="event-pin-halo" r={r + 5} />}
+            <circle r={r} fill={EVENT_TYPE_INFO[event.type].color} />
+          </g>
+        );
+      })}
+    </g>
+  );
+});
 
 type ShapeProps = ShapeData & {
   className: string;

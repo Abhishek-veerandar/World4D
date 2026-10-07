@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   colorFor,
   formatSpan,
@@ -7,6 +7,7 @@ import {
   type HistoryIndex,
   type PolityFeature,
 } from '../lib/history';
+import { EVENT_TYPE_INFO, type HistoricalEvent } from '../lib/events';
 
 type Props = {
   year: number;
@@ -17,6 +18,11 @@ type Props = {
   onSelect: (polity: PolityFeature) => void;
   onClear: () => void;
   onJumpTo: (year: number) => void;
+  /** Pins on the map right now, most notable first. */
+  eventsNow: HistoricalEvent[];
+  selectedEvent: HistoricalEvent | null;
+  onSelectEvent: (event: HistoricalEvent) => void;
+  onClearEvent: () => void;
 };
 
 export default function HistoryPanel({
@@ -28,6 +34,10 @@ export default function HistoryPanel({
   onSelect,
   onClear,
   onJumpTo,
+  eventsNow,
+  selectedEvent,
+  onSelectEvent,
+  onClearEvent,
 }: Props) {
   if (error) {
     return (
@@ -41,7 +51,9 @@ export default function HistoryPanel({
 
   return (
     <aside className="panel">
-      {selectedName ? (
+      {selectedEvent ? (
+        <EventDetails event={selectedEvent} year={year} onClear={onClearEvent} onJumpTo={onJumpTo} />
+      ) : selectedName ? (
         <PolityDetails
           name={selectedName}
           year={year}
@@ -51,7 +63,11 @@ export default function HistoryPanel({
           onJumpTo={onJumpTo}
         />
       ) : (
-        <PolityList year={year} polities={polities} onSelect={onSelect} />
+        <PolityList year={year} polities={polities} onSelect={onSelect}>
+          {eventsNow.length > 0 && (
+            <EventList year={year} events={eventsNow} onSelect={onSelectEvent} />
+          )}
+        </PolityList>
       )}
 
       <p className="attribution">
@@ -64,7 +80,11 @@ export default function HistoryPanel({
           Cliopatria
         </a>{' '}
         (Seshat Global History Databank), CC BY 4.0, simplified. Borders are approximate,
-        especially for ancient periods.
+        especially for ancient periods. Events:{' '}
+        <a href="https://www.wikidata.org" target="_blank" rel="noreferrer">
+          Wikidata
+        </a>{' '}
+        (CC0); some locations are approximate.
       </p>
     </aside>
   );
@@ -74,10 +94,13 @@ function PolityList({
   year,
   polities,
   onSelect,
+  children,
 }: {
   year: number;
   polities: PolityFeature[];
   onSelect: (polity: PolityFeature) => void;
+  /** Shown between the intro and the polity list (the events around this year). */
+  children?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
 
@@ -94,8 +117,10 @@ function PolityList({
       <h2>{formatYear(year)}</h2>
       <p className="panel-hint">
         Drag the timeline or press play to watch borders change. Click any territory to follow
-        it through time.
+        it through time, or a dot to see what happened there.
       </p>
+
+      {children}
 
       <section className="region-list">
         <h3>
@@ -226,6 +251,98 @@ function PolityDetails({
 
       <button type="button" className="clear-btn" onClick={onClear}>
         Back to all polities
+      </button>
+    </>
+  );
+}
+
+function EventList({
+  year,
+  events,
+  onSelect,
+}: {
+  year: number;
+  events: HistoricalEvent[];
+  onSelect: (event: HistoricalEvent) => void;
+}) {
+  return (
+    <section className="region-list">
+      <h3>
+        Events around {formatYear(year)}
+        <span className="count">{events.length}</span>
+      </h3>
+      <ul>
+        {events.map((e) => (
+          <li key={e.id}>
+            <button type="button" onClick={() => onSelect(e)}>
+              <span
+                className="swatch round"
+                style={{ background: EVENT_TYPE_INFO[e.type].color }}
+                aria-hidden="true"
+              />
+              <span className="event-row-name">{e.name}</span>
+              <span className="event-row-year">{formatYear(e.year)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function EventDetails({
+  event,
+  year,
+  onClear,
+  onJumpTo,
+}: {
+  event: HistoricalEvent;
+  year: number;
+  onClear: () => void;
+  onJumpTo: (year: number) => void;
+}) {
+  const info = EVENT_TYPE_INFO[event.type];
+  const when = event.end ? formatSpan(event.year, event.end) : formatYear(event.year);
+  const isNow = event.year <= year && year <= (event.end ?? event.year);
+
+  return (
+    <>
+      <p className="panel-eyebrow" style={{ color: info.color }}>
+        {info.singular}
+      </p>
+      <h2>{event.name}</h2>
+      {event.desc && <p className="panel-hint">{event.desc}</p>}
+
+      <dl className="stats">
+        <div>
+          <dt>When</dt>
+          <dd>{when}</dd>
+        </div>
+        <div>
+          <dt>Where</dt>
+          <dd>
+            {Math.abs(event.lat).toFixed(2)}° {event.lat >= 0 ? 'N' : 'S'},{' '}
+            {Math.abs(event.lon).toFixed(2)}° {event.lon >= 0 ? 'E' : 'W'}
+          </dd>
+        </div>
+      </dl>
+
+      {!isNow && (
+        <div className="jump-row">
+          <button type="button" className="clear-btn" onClick={() => onJumpTo(event.year)}>
+            Go to {formatYear(event.year)}
+          </button>
+        </div>
+      )}
+
+      {event.wiki && (
+        <a className="wiki-link" href={wikipediaUrl(event.wiki)} target="_blank" rel="noreferrer">
+          Read about it on Wikipedia ↗
+        </a>
+      )}
+
+      <button type="button" className="clear-btn" onClick={onClear}>
+        Close
       </button>
     </>
   );

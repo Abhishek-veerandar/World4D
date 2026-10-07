@@ -720,3 +720,253 @@ kbd {
     display: none;
   }
 }
+
+/* ---------- Search ---------- */
+
+.search {
+  position: relative;
+  flex: 1;
+  max-width: 440px;
+  min-width: 0;
+}
+
+.search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 34px 0 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.search-input::placeholder {
+  color: var(--muted);
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.search-hint {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.search-input:focus + .search-hint {
+  display: none;
+}
+
+.search-results {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+}
+
+.search-results li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.search-results li.active {
+  background: var(--bg);
+}
+
+.search-empty {
+  color: var(--muted);
+  cursor: default !important;
+}
+
+.result-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-meta {
+  flex: none;
+  margin-left: 10px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.swatch.round {
+  border-radius: 50%;
+}
+
+.swatch.outline {
+  border: 1.5px solid var(--muted);
+  background: transparent;
+}
+
+/* ---------- Event filters ---------- */
+
+.event-filters {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 72px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.event-filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(18, 26, 48, 0.88);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.event-filters button:hover {
+  color: var(--text);
+}
+
+.event-filters button.on {
+  color: var(--text);
+  border-color: rgba(143, 155, 184, 0.45);
+}
+
+.filter-all.on {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+.filter-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.filter-chip:not(.on) .filter-dot {
+  opacity: 0.35;
+}
+
+.filter-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.filter-note {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.filter-note.error {
+  color: #e2675f;
+}
+
+/* ---------- Event pins ---------- */
+
+.event-pin {
+  cursor: pointer;
+  transition: opacity 200ms ease;
+}
+
+.event-pin circle:not(.event-pin-halo) {
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+
+.event-pin:hover circle:not(.event-pin-halo) {
+  stroke: var(--text);
+}
+
+.event-pin-halo {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.5;
+  opacity: 0.8;
+}
+
+/* ---------- Event strip (timeline) ---------- */
+
+.event-strip {
+  --strip-bar: #56648a;
+  --strip-cursor: var(--accent);
+  /* Inset to line up with the slider track, whose ends sit under the thumb. */
+  margin: 2px 8px 0;
+  cursor: pointer;
+}
+
+.event-strip canvas {
+  display: block;
+}
+
+/* ---------- Event rows in the panel ---------- */
+
+.event-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-row-year {
+  flex: none;
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .app-header h1 {
+    font-size: 1.05rem;
+  }
+
+  .search {
+    max-width: none;
+  }
+
+  .search-hint {
+    display: none;
+  }
+
+  .event-filters .filter-chip {
+    padding: 0 8px;
+  }
+}
