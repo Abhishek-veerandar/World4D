@@ -5,34 +5,94 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent,
 } from 'react';
-import { geoGraticule10, geoNaturalEarth1, geoPath } from 'd3-geo';
+import { geoGraticule10, geoNaturalEarth1, geoPath, type GeoPermissibleObjects } from 'd3-geo';
 import { select } from 'd3-selection';
 import 'd3-transition';
 import { zoom as d3Zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
-import type { MultiLineString } from 'geojson';
+import type { FeatureCollection, MultiLineString } from 'geojson';
 import type { CountryFeature } from '../lib/countries';
+import type { RegionFeature } from '../lib/regions';
+import { colorFor, type PolityFeature } from '../lib/history';
 import { useElementSize } from '../hooks/useElementSize';
+import Breadcrumb, { type Crumb } from './Breadcrumb';
+
+export type MapMode = 'history' | 'today';
 
 type Props = {
+  mode: MapMode;
+  /** The shape the camera should frame, or null for the whole world. */
+  focus: GeoPermissibleObjects | null;
+  loadingLabel: string | null;
+  crumbs: Crumb[];
+  /** Ocean click, reset button: back to the whole world. */
+  onReset: () => void;
+  /** Esc key: up one level. */
+  onBack: () => void;
+
+  // ---- history mode ----
+  land: FeatureCollection;
+  polities: PolityFeature[];
+  selectedPolityName: string | null;
+  onSelectPolity: (polity: PolityFeature) => void;
+
+  // ---- today mode ----
   countries: CountryFeature[];
   borders: MultiLineString;
-  selectedId: string | null;
-  onSelect: (country: CountryFeature | null) => void;
+  /** States / provinces of the selected country (empty until loaded). */
+  regions: RegionFeature[];
+  /** Districts of the selected state (empty until loaded). */
+  subregions: RegionFeature[];
+  selectedCountryId: string | null;
+  selectedRegionId: string | null;
+  selectedSubregionId: string | null;
+  onSelectCountry: (country: CountryFeature) => void;
+  onSelectRegion: (region: RegionFeature) => void;
+  onSelectSubregion: (region: RegionFeature) => void;
 };
 
 type Tooltip = { name: string; x: number; y: number } | null;
+type ShapeData = { id: string; name: string; d: string; fill?: string };
 
-const MAX_ZOOM = 12;
+// Deep zoom is needed for districts: a small district is a few pixels wide at world scale.
+const MAX_ZOOM = 1000;
+const MAX_FOCUS_ZOOM = 600;
 const SPHERE = { type: 'Sphere' } as const;
+const NO_SHAPES: ShapeData[] = [];
 
-export default function WorldMap({ countries, borders, selectedId, onSelect }: Props) {
+export default function WorldMap(props: Props) {
+  const {
+    mode,
+    focus,
+    loadingLabel,
+    crumbs,
+    onReset,
+    onBack,
+    land,
+    polities,
+    selectedPolityName,
+    onSelectPolity,
+    countries,
+    borders,
+    regions,
+    subregions,
+    selectedCountryId,
+    selectedRegionId,
+    selectedSubregionId,
+    onSelectCountry,
+    onSelectRegion,
+    onSelectSubregion,
+  } = props;
+
   const { ref: containerRef, width, height } = useElementSize<HTMLDivElement>();
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip>(null);
+
+  const isHistory = mode === 'history';
 
   // Projection and path generator, re-fitted whenever the container resizes.
   const path = useMemo(() => {
@@ -40,17 +100,96 @@ export default function WorldMap({ countries, borders, selectedId, onSelect }: P
     return geoPath(projection);
   }, [width, height]);
 
-  // Pre-compute the SVG path strings once per size, not on every render.
-  const shapes = useMemo(
-    () => countries.map((c) => ({ country: c, d: path(c) ?? '' })),
-    [countries, path],
-  );
   const spherePath = useMemo(() => path(SPHERE) ?? '', [path]);
   const graticulePath = useMemo(() => path(geoGraticule10()) ?? '', [path]);
-  const bordersPath = useMemo(() => path(borders) ?? '', [path, borders]);
 
-  // Pan and zoom. The transform is written straight to the <g> element so that
-  // dragging doesn't re-render ~180 React elements on every frame.
+  // ---------- history shapes ----------
+
+  const landPath = useMemo(() => (isHistory ? (path(land) ?? '') : ''), [isHistory, path, land]);
+
+  // Most polities keep the same record for many years, so cache each record's path
+  // string: scrubbing the timeline then only computes paths for records that changed.
+  const polityPathCache = useMemo(() => new WeakMap<PolityFeature, string>(), [path]);
+  const polityShapes = useMemo<ShapeData[]>(() => {
+    if (!isHistory) return NO_SHAPES;
+    return polities.map((p) => {
+      let d = polityPathCache.get(p);
+      if (d === undefined) {
+        d = path(p) ?? '';
+        polityPathCache.set(p, d);
+      }
+      return { id: p.id, name: p.properties.name, d, fill: colorFor(p.properties.name) };
+    });
+  }, [isHistory, polities, path, polityPathCache]);
+
+  // ---------- today shapes ----------
+
+  const countryShapes = useMemo<ShapeData[]>(
+    () =>
+      isHistory
+        ? NO_SHAPES
+        : countries.map((c) => ({ id: c.id, name: c.properties.name, d: path(c) ?? '' })),
+    [isHistory, countries, path],
+  );
+  const regionShapes = useMemo<ShapeData[]>(
+    () =>
+      isHistory
+        ? NO_SHAPES
+        : regions.map((r) => ({ id: r.id, name: r.properties.shapeName, d: path(r) ?? '' })),
+    [isHistory, regions, path],
+  );
+  const subregionShapes = useMemo<ShapeData[]>(
+    () =>
+      isHistory
+        ? NO_SHAPES
+        : subregions.map((r) => ({ id: r.id, name: r.properties.shapeName, d: path(r) ?? '' })),
+    [isHistory, subregions, path],
+  );
+  const bordersPath = useMemo(
+    () => (isHistory ? '' : (path(borders) ?? '')),
+    [isHistory, path, borders],
+  );
+
+  // ---------- click handlers (shapes report a stable id) ----------
+
+  const polityById = useMemo(() => new Map(polities.map((p) => [p.id, p])), [polities]);
+  const countryById = useMemo(() => new Map(countries.map((c) => [c.id, c])), [countries]);
+  const regionById = useMemo(() => new Map(regions.map((r) => [r.id, r])), [regions]);
+  const subregionById = useMemo(() => new Map(subregions.map((r) => [r.id, r])), [subregions]);
+
+  const handlePolityClick = useCallback(
+    (id: string) => {
+      const p = polityById.get(id);
+      if (p) onSelectPolity(p);
+    },
+    [polityById, onSelectPolity],
+  );
+  const handleCountryClick = useCallback(
+    (id: string) => {
+      const c = countryById.get(id);
+      if (c) onSelectCountry(c);
+    },
+    [countryById, onSelectCountry],
+  );
+  const handleRegionClick = useCallback(
+    (id: string) => {
+      const r = regionById.get(id);
+      if (r) onSelectRegion(r);
+    },
+    [regionById, onSelectRegion],
+  );
+  const handleSubregionClick = useCallback(
+    (id: string) => {
+      const r = subregionById.get(id);
+      if (r) onSelectSubregion(r);
+    },
+    [subregionById, onSelectSubregion],
+  );
+
+  // ---------- pan & zoom ----------
+
+  // The transform is written straight to the <g> element so that dragging
+  // doesn't re-render hundreds of React elements on every frame.
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg || !width || !height) return;
@@ -87,18 +226,17 @@ export default function WorldMap({ countries, borders, selectedId, onSelect }: P
     zoom.scaleBy(select(svg).transition().duration(300), factor);
   };
 
-  // Fly to the selected country, or back out to the full world when cleared.
+  // Fly to whatever is in focus, or back out to the full world.
   useEffect(() => {
     if (!width || !height || !zoomRef.current) return;
-    const country = countries.find((c) => c.id === selectedId);
-    if (!country) {
+    if (!focus) {
       animateTo(zoomIdentity);
       return;
     }
-    const [[x0, y0], [x1, y1]] = path.bounds(country);
+    const [[x0, y0], [x1, y1]] = path.bounds(focus);
     const scale = Math.max(
       1,
-      Math.min(8, 0.85 / Math.max((x1 - x0) / width, (y1 - y0) / height)),
+      Math.min(MAX_FOCUS_ZOOM, 0.85 / Math.max((x1 - x0) / width, (y1 - y0) / height)),
     );
     animateTo(
       zoomIdentity
@@ -106,53 +244,145 @@ export default function WorldMap({ countries, borders, selectedId, onSelect }: P
         .scale(scale)
         .translate(-(x0 + x1) / 2, -(y0 + y1) / 2),
     );
-  }, [selectedId, countries, path, width, height, animateTo]);
+  }, [focus, path, width, height, animateTo]);
 
-  // Escape clears the selection.
+  // Escape goes up one level. Ignored while typing in a text field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onSelect(null);
+      if (e.key !== 'Escape') return;
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'range') return;
+      onBack();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onSelect]);
+  }, [onBack]);
+
+  // ---------- tooltip ----------
 
   const handleHover = useCallback(
-    (country: CountryFeature, e: MouseEvent) => {
+    (name: string, e: MouseEvent) => {
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
-      setTooltip({
-        name: country.properties.name,
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      });
+      setTooltip({ name, x: e.clientX - rect.left, y: e.clientY - rect.top });
     },
     [containerRef],
   );
-
   const handleLeave = useCallback(() => setTooltip(null), []);
+
+  // A hovered shape can disappear when the year changes; drop its stale tooltip.
+  useEffect(() => setTooltip(null), [mode]);
+
+  // Once a deeper layer is drawn, the layer above it fades into the background.
+  const showingRegions = regionShapes.length > 0;
+  const showingSubregions = subregionShapes.length > 0;
 
   return (
     <div className="map" ref={containerRef}>
       {width > 0 && height > 0 && (
         <svg ref={svgRef} width={width} height={height} role="img" aria-label="World map">
           <g ref={gRef}>
-            <path className="sphere" d={spherePath} onClick={() => onSelect(null)} />
+            <path className="sphere" d={spherePath} onClick={onReset} />
             <path className="graticule" d={graticulePath} />
-            {shapes.map(({ country, d }) => (
-              <CountryShape
-                key={country.id}
-                country={country}
-                d={d}
-                selected={country.id === selectedId}
-                onSelect={onSelect}
-                onHover={handleHover}
-                onLeave={handleLeave}
-              />
-            ))}
-            <path className="borders" d={bordersPath} />
+
+            {isHistory && (
+              <>
+                <path className="land-base" d={landPath} onClick={onReset} />
+                <g className={selectedPolityName ? 'layer layer-polities focused' : 'layer layer-polities'}>
+                  {polityShapes.map((s) => (
+                    <Shape
+                      key={s.id}
+                      {...s}
+                      className={s.name === selectedPolityName ? 'polity selected' : 'polity'}
+                      onSelect={handlePolityClick}
+                      onHover={handleHover}
+                      onLeave={handleLeave}
+                    />
+                  ))}
+                </g>
+              </>
+            )}
+
+            {!isHistory && (
+              <>
+                <g
+                  className={
+                    selectedCountryId ? 'layer layer-countries focused' : 'layer layer-countries'
+                  }
+                >
+                  {countryShapes.map((s) => (
+                    <Shape
+                      key={s.id}
+                      {...s}
+                      className={
+                        s.id === selectedCountryId
+                          ? showingRegions
+                            ? 'country current'
+                            : 'country selected'
+                          : 'country'
+                      }
+                      onSelect={handleCountryClick}
+                      onHover={handleHover}
+                      onLeave={handleLeave}
+                    />
+                  ))}
+                  <path className="borders" d={bordersPath} />
+                </g>
+
+                {showingRegions && (
+                  <g
+                    className={
+                      selectedRegionId ? 'layer layer-regions focused' : 'layer layer-regions'
+                    }
+                  >
+                    {regionShapes.map((s) => (
+                      <Shape
+                        key={s.id}
+                        {...s}
+                        className={
+                          s.id === selectedRegionId
+                            ? showingSubregions
+                              ? 'region current'
+                              : 'region selected'
+                            : 'region'
+                        }
+                        onSelect={handleRegionClick}
+                        onHover={handleHover}
+                        onLeave={handleLeave}
+                      />
+                    ))}
+                  </g>
+                )}
+
+                {showingSubregions && (
+                  <g className="layer layer-subregions">
+                    {subregionShapes.map((s) => (
+                      <Shape
+                        key={s.id}
+                        {...s}
+                        className={
+                          s.id === selectedSubregionId ? 'subregion selected' : 'subregion'
+                        }
+                        onSelect={handleSubregionClick}
+                        onHover={handleHover}
+                        onLeave={handleLeave}
+                      />
+                    ))}
+                  </g>
+                )}
+              </>
+            )}
           </g>
         </svg>
+      )}
+
+      <Breadcrumb crumbs={crumbs} />
+
+      {loadingLabel && (
+        <div className="map-status" role="status">
+          <span className="spinner" aria-hidden="true" />
+          {loadingLabel}
+        </div>
       )}
 
       {tooltip && (
@@ -168,7 +398,7 @@ export default function WorldMap({ countries, borders, selectedId, onSelect }: P
         <button type="button" onClick={() => zoomBy(1 / 1.6)} aria-label="Zoom out">
           −
         </button>
-        <button type="button" onClick={() => onSelect(null)} aria-label="Reset view">
+        <button type="button" onClick={onReset} aria-label="Back to world view">
           ⟲
         </button>
       </div>
@@ -176,29 +406,35 @@ export default function WorldMap({ countries, borders, selectedId, onSelect }: P
   );
 }
 
-type ShapeProps = {
-  country: CountryFeature;
-  d: string;
-  selected: boolean;
-  onSelect: (country: CountryFeature) => void;
-  onHover: (country: CountryFeature, e: MouseEvent) => void;
+type ShapeProps = ShapeData & {
+  className: string;
+  onSelect: (id: string) => void;
+  onHover: (name: string, e: MouseEvent) => void;
   onLeave: () => void;
 };
 
-const CountryShape = memo(function CountryShape({
-  country,
+const Shape = memo(function Shape({
+  id,
+  name,
   d,
-  selected,
+  fill,
+  className,
   onSelect,
   onHover,
   onLeave,
 }: ShapeProps) {
+  // Per-polity color goes through a CSS variable so hover/selected styles can still override it.
+  const style = fill ? ({ '--fill': fill } as CSSProperties) : undefined;
   return (
     <path
-      className={selected ? 'country selected' : 'country'}
+      className={className}
       d={d}
-      onClick={() => onSelect(country)}
-      onMouseMove={(e) => onHover(country, e)}
+      style={style}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect(id);
+      }}
+      onMouseMove={(e) => onHover(name, e)}
       onMouseLeave={onLeave}
     />
   );

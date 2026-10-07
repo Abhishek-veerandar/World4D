@@ -1,18 +1,20 @@
 {
   "name": "world4d",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:history": "node --max-old-space-size=4096 scripts/build-history.mjs"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",
     "d3-selection": "^3.0.0",
     "d3-transition": "^3.0.1",
     "d3-zoom": "^3.0.0",
+    "i18n-iso-countries": "^7.11.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "topojson-client": "^3.1.0",

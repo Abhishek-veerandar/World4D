@@ -3,3 +3,7 @@ dist
 *.local
 .DS_Store
 *.log
+
+# Raw Cliopatria download (the processed files in public/history are committed)
+cliopatria*.geojson
+cliopatria*.zip
