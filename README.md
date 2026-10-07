@@ -15,6 +15,10 @@ An interactive world map that shows how the world's borders changed from 2000 BC
 - **Events**: battles, wars, treaties, political events (revolutions, coups, independence, assassinations),
   city foundings and new capitals, pinned where they happened while the timeline passes their year.
   Filter by type; a strip above the slider shows how busy each period is (click it to jump)
+- **History of a place**: right-click (or press and hold on touch) any spot to see every polity that ruled it,
+  oldest first, with a timeline bar; click a ruler to jump to its time
+- **Shareable links**: the address bar keeps the year, empire, event or place, so copying it (or the Share
+  button) reopens the same view, e.g. `?year=1700&polity=Mughal+Empire` or `?place=26.85,80.95`
 - Click a polity to follow it through time: its lifespan, area, umbrella entity (e.g. British Empire) and a Wikipedia link
 - Each polity keeps the same color through time
 - World map (Natural Earth projection) drawn as SVG from `world-atlas` TopoJSON data
@@ -50,6 +54,13 @@ An interactive world map that shows how the world's borders changed from 2000 BC
 - **Offline cache**: downloaded centuries are stored in the browser's Cache Storage, keyed by the data version
   in `index.json`. Repeat visits load nothing from the network; rebuilding the data replaces the cache.
 - **Lighter drawing**: history shapes are projected without d3's adaptive resampling and rounded to 2 decimals.
+
+## Deploying
+
+The app is a static site: `npm run build` produces `dist/`, which any static host can serve.
+`.github/workflows/deploy.yml` builds and publishes it to GitHub Pages on every push to `main`
+(one-time setup: repository **Settings → Pages → Source: GitHub Actions**).
+The site then lives at `https://<user>.github.io/World4D/`.
 
 ## Updating the history data
 
@@ -98,6 +109,8 @@ src/
     SearchBox.tsx            # Search across empires, events and countries
     EventFilters.tsx         # Event type toggles over the map
     EventStrip.tsx           # Event density strip above the timeline slider
+    PlacePanel.tsx           # Everyone who ruled a chosen spot
+    ShareButton.tsx          # Copies a link to the current view
   hooks/
     useElementSize.ts        # Keeps the map sized to its container
     useRegions.ts            # Loads states / districts for a country
@@ -110,4 +123,5 @@ src/
     history.worker.ts        # Web Worker: download + decode a century off the main thread
     historyDecode.ts         # TopoJSON decoding and the versioned browser cache
     events.ts                # Event types, colors, which pins show in a year
+    urlState.ts              # Reads / writes the view in the URL for sharing
 ```

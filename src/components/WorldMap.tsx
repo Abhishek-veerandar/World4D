@@ -50,7 +50,12 @@ type Props = {
   land: FeatureCollection;
   polities: PolityFeature[];
   selectedPolityName: string | null;
-  onSelectPolity: (polity: PolityFeature) => void;
+  /** `at` is the clicked spot [lon, lat], for "history of this spot". */
+  onSelectPolity: (polity: PolityFeature, at: [number, number] | null) => void;
+  /** Right-click / long-press / click on unclaimed land: "who ruled this spot?" */
+  onPickPlace: (at: [number, number]) => void;
+  /** The spot whose history is shown, marked on the map. */
+  place: [number, number] | null;
   /** Events to pin on the map, and the year used to fade older ones. */
   events: HistoricalEvent[];
   year: number;
@@ -121,6 +126,8 @@ export default function WorldMap(props: Props) {
     polities,
     selectedPolityName,
     onSelectPolity,
+    onPickPlace,
+    place,
     events,
     year,
     selectedEventId,
@@ -161,6 +168,22 @@ export default function WorldMap(props: Props) {
     [width, height],
   );
   const historyPath = useMemo(() => geoPath(historyProjection).digits(2), [historyProjection]);
+
+  /** Screen position → [lon, lat], or null when it's off the globe. */
+  const toLonLat = useCallback(
+    (clientX: number, clientY: number): [number, number] | null => {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (!rect) return null;
+      const point = transformStore.get().invert([clientX - rect.left, clientY - rect.top]);
+      const lonLat = historyProjection.invert?.(point);
+      if (!lonLat || !Number.isFinite(lonLat[0]) || !Number.isFinite(lonLat[1])) return null;
+      // Points outside the globe outline invert to something; reject them by projecting back.
+      const back = historyProjection(lonLat);
+      if (!back || Math.hypot(back[0] - point[0], back[1] - point[1]) > 1) return null;
+      return [Math.round(lonLat[0] * 100) / 100, Math.round(lonLat[1] * 100) / 100];
+    },
+    [historyProjection, transformStore],
+  );
 
   const spherePath = useMemo(() => path(SPHERE) ?? '', [path]);
   const graticulePath = useMemo(() => path(geoGraticule10()) ?? '', [path]);
@@ -220,12 +243,26 @@ export default function WorldMap(props: Props) {
   const subregionById = useMemo(() => new Map(subregions.map((r) => [r.id, r])), [subregions]);
 
   const handlePolityClick = useCallback(
-    (id: string) => {
+    (id: string, e: MouseEvent) => {
       const p = polityById.get(id);
-      if (p) onSelectPolity(p);
+      if (p) onSelectPolity(p, toLonLat(e.clientX, e.clientY));
     },
-    [polityById, onSelectPolity],
+    [polityById, onSelectPolity, toLonLat],
   );
+
+  // Right-click (desktop) or press-and-hold (touch) anywhere on the history map.
+  const pickAt = useCallback(
+    (clientX: number, clientY: number) => {
+      const at = toLonLat(clientX, clientY);
+      if (at) onPickPlace(at);
+    },
+    [toLonLat, onPickPlace],
+  );
+  const longPress = useRef<{ timer: number; x: number; y: number } | null>(null);
+  const cancelLongPress = () => {
+    if (longPress.current) window.clearTimeout(longPress.current.timer);
+    longPress.current = null;
+  };
   const handleCountryClick = useCallback(
     (id: string) => {
       const c = countryById.get(id);
@@ -357,14 +394,41 @@ export default function WorldMap(props: Props) {
   return (
     <div className="map" ref={containerRef}>
       {width > 0 && height > 0 && (
-        <svg ref={svgRef} width={width} height={height} role="img" aria-label="World map">
+        <svg
+          ref={svgRef}
+          width={width}
+          height={height}
+          role="img"
+          aria-label="World map"
+          onContextMenu={(e) => {
+            if (!isHistory) return;
+            e.preventDefault();
+            pickAt(e.clientX, e.clientY);
+          }}
+          onPointerDown={(e) => {
+            if (!isHistory || e.pointerType !== 'touch') return;
+            cancelLongPress();
+            const { clientX: x, clientY: y } = e;
+            longPress.current = { x, y, timer: window.setTimeout(() => pickAt(x, y), 600) };
+          }}
+          onPointerMove={(e) => {
+            const lp = longPress.current;
+            if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) cancelLongPress();
+          }}
+          onPointerUp={cancelLongPress}
+          onPointerCancel={cancelLongPress}
+        >
           <g ref={gRef}>
             <path className="sphere" d={spherePath} onClick={onReset} />
             <path className="graticule" d={graticulePath} />
 
             {isHistory && (
               <>
-                <path className="land-base" d={landPath} onClick={onReset} />
+                <path
+                  className="land-base"
+                  d={landPath}
+                  onClick={(e) => pickAt(e.clientX, e.clientY)}
+                />
                 <g className={selectedPolityName ? 'layer layer-polities focused' : 'layer layer-polities'}>
                   {polityShapes.map((s) => (
                     <Shape
@@ -450,6 +514,10 @@ export default function WorldMap(props: Props) {
               </>
             )}
           </g>
+
+          {isHistory && place && (
+            <PlaceMarker place={place} projection={historyProjection} store={transformStore} />
+          )}
 
           {isHistory && events.length > 0 && (
             <EventPins
@@ -574,7 +642,7 @@ const EventPins = memo(function EventPins({
 
 type ShapeProps = ShapeData & {
   className: string;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, e: MouseEvent) => void;
   onHover: (name: string, e: MouseEvent) => void;
   onLeave: () => void;
 };
@@ -598,10 +666,32 @@ const Shape = memo(function Shape({
       style={style}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect(id);
+        onSelect(id, e);
       }}
       onMouseMove={(e) => onHover(name, e)}
       onMouseLeave={onLeave}
     />
+  );
+});
+
+/** Crosshair for the spot whose history is shown; same size at every zoom. */
+const PlaceMarker = memo(function PlaceMarker({
+  place,
+  projection,
+  store,
+}: {
+  place: [number, number];
+  projection: GeoProjection;
+  store: TransformStore;
+}) {
+  const transform = useSyncExternalStore(store.subscribe, store.get);
+  const p = projection(place);
+  if (!p) return null;
+  const [x, y] = transform.apply(p);
+  return (
+    <g className="place-marker" transform={`translate(${x.toFixed(1)},${y.toFixed(1)})`} aria-hidden="true">
+      <circle r={9} />
+      <path d="M-15 0h8M7 0h8M0 -15v8M0 7v8" />
+    </g>
   );
 });

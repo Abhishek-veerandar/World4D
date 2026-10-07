@@ -133,7 +133,8 @@ function inRing([x, y]: Position, ring: Position[]): boolean {
   return inside;
 }
 
-function contains(geometry: Polygon | MultiPolygon, point: Position): boolean {
+/** Planar point-in-polygon test (holes respected), in lon/lat. */
+export function contains(geometry: Polygon | MultiPolygon, point: Position): boolean {
   return polygonsOf(geometry).some(
     ([outer, ...holes]) => inRing(point, outer) && !holes.some((hole) => inRing(point, hole)),
   );

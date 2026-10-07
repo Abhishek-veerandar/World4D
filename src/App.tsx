@@ -6,10 +6,14 @@ import Timeline, { type Speed } from './components/Timeline';
 import type { Crumb } from './components/Breadcrumb';
 import EventFilters from './components/EventFilters';
 import SearchBox from './components/SearchBox';
+import PlacePanel, { type PlaceState } from './components/PlacePanel';
+import ShareButton from './components/ShareButton';
+import { geoContains } from 'd3-geo';
 import { borders, countries, land, type CountryFeature } from './lib/countries';
 import { regionsWithin, type RegionFeature } from './lib/regions';
 import type { Point } from 'geojson';
-import type { PolityFeature } from './lib/history';
+import { placeHistory, type PolityFeature, type Reign } from './lib/history';
+import { readUrlState, writeUrlState } from './lib/urlState';
 import {
   afterglowYears,
   ALL_EVENT_TYPES,
@@ -52,11 +56,16 @@ function loadSavedTypes(): Set<EventType> {
 }
 
 export default function App() {
-  const [mode, setMode] = useState<MapMode>('history');
+  // The URL can open the app on a specific view (see lib/urlState.ts).
+  const [initial] = useState(readUrlState);
+
+  const [mode, setMode] = useState<MapMode>(initial.mode);
 
   // ---------- history mode ----------
 
-  const [year, setYear] = useState(DEFAULT_YEAR);
+  const [year, setYear] = useState(
+    initial.year !== undefined ? Math.min(END_YEAR, Math.max(START_YEAR, initial.year)) : DEFAULT_YEAR,
+  );
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<Speed>(20);
   const [polity, setPolity] = useState<PolitySelection>(null);
@@ -131,6 +140,7 @@ export default function App() {
   const selectEvent = useCallback(
     (e: HistoricalEvent) => {
       setPolity(null);
+      setPlace(null);
       setSelectedEvent(e);
       // Bring the timeline to the event unless it is already showing.
       const showing = e.year <= year && year <= (e.end ?? e.year) + afterglowYears(year);
@@ -143,26 +153,18 @@ export default function App() {
 
   // Picking a polity and an event are exclusive: the panel shows one at a time.
   const selectPolityOnly = useCallback(
-    (p: PolityFeature) => {
+    (p: PolityFeature, at: [number, number] | null = null) => {
       setSelectedEvent(null);
+      setPlace(null);
+      setLastClick(at);
       selectPolity(p);
     },
     [selectPolity],
   );
 
-  /** Esc / ocean click in history mode: close the event first, then the polity. */
-  const historyBack = useCallback(() => {
-    if (selectedEvent) setSelectedEvent(null);
-    else setPolity(null);
-  }, [selectedEvent]);
-
-  const historyReset = useCallback(() => {
-    setSelectedEvent(null);
-    setPolity(null);
-  }, []);
 
   // A polity picked in search is selected once its century has loaded.
-  const [pendingPolity, setPendingPolity] = useState<string | null>(null);
+  const [pendingPolity, setPendingPolity] = useState<string | null>(initial.polity ?? null);
   useEffect(() => {
     if (!pendingPolity || history.loading) return;
     const match = history.polities.find((p) => p.properties.name === pendingPolity);
@@ -173,9 +175,86 @@ export default function App() {
     setPendingPolity(null);
   }, [pendingPolity, history.polities, history.loading]);
 
+  // An event in the URL is selected once the event list has loaded.
+  const [pendingEvent, setPendingEvent] = useState<string | null>(initial.event ?? null);
+  useEffect(() => {
+    if (!pendingEvent || eventsState.events.length === 0) return;
+    const match = eventsState.events.find((e) => e.id === pendingEvent);
+    if (match) {
+      setSelectedEvent(match);
+      setEventTypes((types) => (types.has(match.type) ? types : new Set([...types, match.type])));
+    }
+    setPendingEvent(null);
+  }, [pendingEvent, eventsState.events]);
+
+  // ---------- who ruled this spot ----------
+
+  const [place, setPlace] = useState<[number, number] | null>(initial.place ?? null);
+  const [placeState, setPlaceState] = useState<PlaceState | null>(null);
+  /** Where the user last clicked a polity, for its "who else ruled this spot?" button. */
+  const [lastClick, setLastClick] = useState<[number, number] | null>(null);
+
+  useEffect(() => {
+    if (!place || !history.index) return;
+    let cancelled = false;
+    setPlaceState({ status: 'loading', done: 0, total: history.index.chunks.length });
+    placeHistory(history.index, place[0], place[1], (done, total) => {
+      if (!cancelled) setPlaceState({ status: 'loading', done, total });
+    })
+      .then((reigns) => !cancelled && setPlaceState({ status: 'ready', reigns }))
+      .catch(
+        (e: unknown) =>
+          !cancelled && setPlaceState({ status: 'error', message: e instanceof Error ? e.message : String(e) }),
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [place, history.index]);
+
+  const countryToday = useMemo(
+    () => (place ? (countries.find((c) => geoContains(c, place))?.properties.name ?? null) : null),
+    [place],
+  );
+
+  const pickPlace = useCallback((at: [number, number]) => {
+    setSelectedEvent(null);
+    setPlace(at);
+  }, []);
+
+  const closePlace = useCallback(() => {
+    setPlace(null);
+    setPlaceState(null);
+  }, []);
+
+  /** Esc in history mode: close the event, then the place, then the polity. */
+  const historyBack = useCallback(() => {
+    if (selectedEvent) setSelectedEvent(null);
+    else if (place) closePlace();
+    else setPolity(null);
+  }, [selectedEvent, place, closePlace]);
+
+  /** Ocean click / reset button: clear everything and zoom out. */
+  const historyReset = useCallback(() => {
+    setSelectedEvent(null);
+    closePlace();
+    setPolity(null);
+  }, [closePlace]);
+
+  /** From the place panel: go to that ruler's time and highlight it, keeping the panel open. */
+  const pickReign = useCallback(
+    (reign: Reign) => {
+      if (year < reign.from || year > reign.to) changeYear(reign.from);
+      setPendingPolity(reign.name);
+    },
+    [year, changeYear],
+  );
+
   // ---------- today mode ----------
 
-  const [selection, setSelection] = useState<TodaySelection>(WORLD);
+  const [selection, setSelection] = useState<TodaySelection>(() => {
+    const c = initial.country ? countries.find((x) => x.iso3 === initial.country) : undefined;
+    return c ? { countryId: c.id, regionId: null, subregionId: null } : WORLD;
+  });
   const isToday = mode === 'today';
 
   const country = useMemo(
@@ -266,9 +345,28 @@ export default function App() {
     [selectedEvent],
   );
 
+  const placeFocus = useMemo<Point | null>(
+    () => (place ? { type: 'Point', coordinates: place } : null),
+    [place],
+  );
+
   const focus = isToday
     ? (subregion ?? region ?? country)
-    : (eventFocus ?? polity?.focus ?? null);
+    : (eventFocus ?? placeFocus ?? polity?.focus ?? null);
+
+  // Keep the address bar in step with the view, so it can be shared. Skipped while
+  // playing (the year changes ten times a second); written when playback stops.
+  useEffect(() => {
+    if (playing) return;
+    writeUrlState({
+      mode,
+      year,
+      polity: pendingPolity ?? polity?.name,
+      event: pendingEvent ?? selectedEvent?.id,
+      place: place ?? undefined,
+      country: country?.iso3 ?? undefined,
+    });
+  }, [playing, mode, year, pendingPolity, polity, pendingEvent, selectedEvent, place, country]);
 
   // ---------- search ----------
 
@@ -276,6 +374,7 @@ export default function App() {
     setMode('history');
     setPlaying(false);
     setSelectedEvent(null);
+    setPlace(null);
     setPolity(null);
     setYear(from);
     setPendingPolity(name);
@@ -285,6 +384,7 @@ export default function App() {
     setMode('history');
     setPlaying(false);
     setPolity(null);
+    setPlace(null);
     setSelectedEvent(e);
     setYear(e.year);
     // Make sure the picked event's type is visible.
@@ -309,6 +409,7 @@ export default function App() {
           onPickEvent={pickEvent}
           onPickCountry={pickCountry}
         />
+        <ShareButton />
         <nav className="mode-switch" aria-label="Map mode">
           <button
             type="button"
@@ -342,6 +443,8 @@ export default function App() {
             polities={history.polities}
             selectedPolityName={polity?.name ?? null}
             onSelectPolity={selectPolityOnly}
+            onPickPlace={pickPlace}
+            place={place}
             events={pins}
             year={year}
             selectedEventId={selectedEvent?.id ?? null}
@@ -396,6 +499,19 @@ export default function App() {
             onSelectSubregion={selectSubregion}
             onBack={goUpToday}
           />
+        ) : place && placeState ? (
+          <aside className="panel">
+            <PlacePanel
+              place={place}
+              countryToday={countryToday}
+              state={placeState}
+              year={year}
+              min={START_YEAR}
+              max={endYear}
+              onPickReign={pickReign}
+              onClose={closePlace}
+            />
+          </aside>
         ) : (
           <HistoryPanel
             year={year}
@@ -410,6 +526,7 @@ export default function App() {
             selectedEvent={selectedEvent}
             onSelectEvent={selectEvent}
             onClearEvent={clearEvent}
+            onSpotHistory={lastClick ? () => pickPlace(lastClick) : null}
           />
         )}
       </main>

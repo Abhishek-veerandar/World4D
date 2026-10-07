@@ -136,6 +136,20 @@ function cleanGeometry(geometry) {
     : { type: 'MultiPolygon', coordinates: cleaned };
 }
 
+function bboxOf(geometry) {
+  let [w, sth, e, n] = [Infinity, Infinity, -Infinity, -Infinity];
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+  for (const [outer] of polygons) {
+    for (const [x, y] of outer) {
+      if (x < w) w = x;
+      if (y < sth) sth = y;
+      if (x > e) e = x;
+      if (y > n) n = y;
+    }
+  }
+  return [w, sth, e, n];
+}
+
 // ---------- build records ----------
 
 /** Umbrella entities this polity belongs to, minus ones that just repeat its own name. */
@@ -161,6 +175,9 @@ for (const f of features) {
     from: p.FromYear,
     to: p.ToYear,
     area: Math.round(p.Area ?? 0),
+    // Bounding box [west, south, east, north], so "who ruled this spot?" can skip
+    // shapes that are nowhere near without decoding them.
+    bb: bboxOf(geometry),
     wikipedia: p.Wikipedia || undefined,
     wikidata: p.Wikidata || undefined,
     memberOf: umbrellaOf(p),

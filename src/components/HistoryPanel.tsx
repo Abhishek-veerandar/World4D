@@ -23,6 +23,8 @@ type Props = {
   selectedEvent: HistoricalEvent | null;
   onSelectEvent: (event: HistoricalEvent) => void;
   onClearEvent: () => void;
+  /** Opens the history of the spot last clicked on the map, when there is one. */
+  onSpotHistory: (() => void) | null;
 };
 
 export default function HistoryPanel({
@@ -38,6 +40,7 @@ export default function HistoryPanel({
   selectedEvent,
   onSelectEvent,
   onClearEvent,
+  onSpotHistory,
 }: Props) {
   if (error) {
     return (
@@ -61,6 +64,7 @@ export default function HistoryPanel({
           current={polities.find((p) => p.properties.name === selectedName) ?? null}
           onClear={onClear}
           onJumpTo={onJumpTo}
+          onSpotHistory={onSpotHistory}
         />
       ) : (
         <PolityList year={year} polities={polities} onSelect={onSelect}>
@@ -117,7 +121,8 @@ function PolityList({
       <h2>{formatYear(year)}</h2>
       <p className="panel-hint">
         Drag the timeline or press play to watch borders change. Click any territory to follow
-        it through time, or a dot to see what happened there.
+        it through time, or a dot to see what happened there. Right-click (or press and hold) any
+        spot to see everyone who ruled it.
       </p>
 
       {children}
@@ -167,6 +172,7 @@ function PolityDetails({
   current,
   onClear,
   onJumpTo,
+  onSpotHistory,
 }: {
   name: string;
   year: number;
@@ -174,6 +180,7 @@ function PolityDetails({
   current: PolityFeature | null;
   onClear: () => void;
   onJumpTo: (year: number) => void;
+  onSpotHistory: (() => void) | null;
 }) {
   const lifespan = index?.lifespans[name];
   const props = current?.properties;
@@ -247,6 +254,12 @@ function PolityDetails({
         >
           Read about it on Wikipedia ↗
         </a>
+      )}
+
+      {onSpotHistory && (
+        <button type="button" className="clear-btn accent" onClick={onSpotHistory}>
+          Who else ruled this spot?
+        </button>
       )}
 
       <button type="button" className="clear-btn" onClick={onClear}>

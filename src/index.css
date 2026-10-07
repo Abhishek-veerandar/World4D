@@ -970,3 +970,195 @@ kbd {
     padding: 0 8px;
   }
 }
+
+/* ---------- Share ---------- */
+
+.share {
+  position: relative;
+  flex: none;
+}
+
+.share-btn {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.share-btn:hover {
+  border-color: var(--accent);
+}
+
+.share-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(360px, 80vw);
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.share-popover label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.share-popover input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+/* ---------- Place history ---------- */
+
+.place-marker circle {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.place-marker path {
+  stroke: var(--text);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.place-progress {
+  margin-bottom: 16px;
+}
+
+.place-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.place-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+.place-history {
+  margin-bottom: 16px;
+}
+
+.reign-bar {
+  position: relative;
+  height: 18px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.reign-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+}
+
+.reign-cursor {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+}
+
+.place-history h3 {
+  margin: 14px 0 8px;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.reign-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.reign-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.reign {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reign:hover {
+  background: var(--bg);
+}
+
+.reign.current {
+  background: rgba(79, 209, 197, 0.12);
+}
+
+.reign-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.reign-name {
+  font-size: 0.875rem;
+}
+
+.reign-years {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.reign-gap {
+  padding: 6px 12px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.clear-btn.accent {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@media (max-width: 760px) {
+  .share-btn {
+    padding: 0 10px;
+  }
+}
