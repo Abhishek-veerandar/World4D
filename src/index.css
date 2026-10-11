@@ -1217,3 +1217,33 @@ kbd {
     padding: 0 10px;
   }
 }
+
+/* ---------- Scrollbars ---------- */
+
+/* Thin, dark scrollbars that match the theme (side panel, lists, search results). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--land) transparent;
+}
+
+/* Older Chrome / Safari / Edge versions */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--land);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--land-hover);
+}
