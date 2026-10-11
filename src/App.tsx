@@ -8,6 +8,7 @@ import EventFilters from './components/EventFilters';
 import SearchBox from './components/SearchBox';
 import PlacePanel, { type PlaceState } from './components/PlacePanel';
 import ShareButton from './components/ShareButton';
+import Logo from './components/Logo';
 import { geoContains } from 'd3-geo';
 import { borders, countries, land, type CountryFeature } from './lib/countries';
 import { regionsWithin, type RegionFeature } from './lib/regions';
@@ -400,8 +401,11 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>
-          World<span>4D</span>
+        <h1 className="brand">
+          <Logo size={30} className="brand-mark" />
+          <span className="brand-name">
+            World<span className="brand-accent">4D</span>
+          </span>
         </h1>
         <SearchBox
           countries={countries}

@@ -5,6 +5,7 @@
   --text: #e6ebf5;
   --muted: #8f9bb8;
   --accent: #4fd1c5;
+  --logo-amber: #e0a85a;
 
   --ocean: #0f1a33;
   --graticule: rgba(143, 155, 184, 0.12);
@@ -57,8 +58,58 @@ body,
   letter-spacing: 0.02em;
 }
 
-.app-header h1 span {
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.brand-mark {
+  display: block;
+  flex: none;
+}
+
+.brand-accent {
   color: var(--accent);
+}
+
+/* ---------- Logo ---------- */
+
+.logo-teal {
+  stroke: var(--accent);
+}
+
+.logo-amber {
+  stroke: var(--logo-amber);
+}
+
+.logo-pin {
+  fill: var(--logo-amber);
+}
+
+/* Hovering the brand spins the R's two clock hands around the centre pin and back into
+   the R: the upright hand once, the leg twice. Leaving turns them back. */
+.logo-hand-a,
+.logo-hand-b {
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+  transition: transform 1.6s cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.brand:hover .logo-hand-a {
+  transform: rotate(360deg);
+}
+
+.brand:hover .logo-hand-b {
+  transform: rotate(720deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-hand-a,
+  .logo-hand-b {
+    transition: none;
+  }
 }
 
 .mode-switch {
@@ -956,6 +1007,10 @@ kbd {
 @media (max-width: 760px) {
   .app-header h1 {
     font-size: 1.05rem;
+  }
+
+  .brand-name {
+    display: none;
   }
 
   .search {
